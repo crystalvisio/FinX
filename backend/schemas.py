@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
+from typing import Union, Optional
 
 class Holding(BaseModel):
     symbol: str
@@ -9,6 +10,8 @@ class Holding(BaseModel):
 
 class DividendInfo(BaseModel):
     symbol: str
-    ex_date: date
-    div_per_share: float
-    ex_payout: float
+    ex_dividend_date: Optional[date] = None
+    dividend_per_share: Optional[Union[float, str]] = None
+    shares: Optional[float] = None
+    payout: Optional[float] = None
+    is_estimated: bool = False
