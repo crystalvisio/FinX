@@ -73,9 +73,26 @@ def get_stock_info(symbol: str) -> dict:
             "longName": ""
         }
 
+def normalise_curr_code(currency:str) -> str:
+    """
+    Normalise currency codes to handle case sensitivity properly
+    Returns standardise currency codes
+    """
+    if not currency:
+        return "GBP"
+    # Handle UK Pence variants before any case conversion
+    if currency in ["GBp", "GBx", "gbp", "gbx", "GBX"]:
+        return "GBX"
+
+    return currency.upper()
+
 def conv_to_pounds(stock_info: dict, price: float) -> float:
-    """Your function to convert pence to pounds"""
-    if stock_info["currency"] == "GBX":
-        print(f"Stock {stock_info['yf_symbol']} is in pence.")
-        return price/100
-    return price
+    """Convert pence to pounds for UK stocks"""
+    raw_curr = stock_info.get("currency", "")
+    normalised_curr = normalise_curr_code(raw_curr)
+
+    if normalised_curr == "GBX":
+        converted_price = price / 100
+        return converted_price
+    else:
+        return price

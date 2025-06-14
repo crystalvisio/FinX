@@ -13,8 +13,6 @@ async def read_dividends():
         holdings = await t212.get_portfolio()
         dividends = await divs.fetch_dividends(holdings)
 
-        ic(dividends)
-
         return dividends
     
     except Exception as e:
