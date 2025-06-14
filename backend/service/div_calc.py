@@ -58,8 +58,15 @@ class DividendCalculator:
         if not ex_date or not div_per_share:
             return None
 
+        # Convert GBX to GBP if needed
+        if holding.currency == "GBX":
+            print(f"  Converting dividend from GBX to GBP")
+            div_per_share = div_per_share / 100
+            holding.currency = "GBP"
+            print(f"  Converted dividend: {div_per_share:.2f} GBP")
+
         # Get shares for dividend calculation
-        shares = await self._get_shares_for_dividend(holding.symbol, holding.shares, ex_date, today)
+        shares = round(await self._get_shares_for_dividend(holding.symbol, holding.shares, ex_date, today), 2)
         
         # Calculate payout
         payout = self._calculate_payout(shares, div_per_share, holding.currency)
@@ -93,51 +100,77 @@ class DividendCalculator:
     
     def _get_dividend_data(self, ticker: yf.Ticker, info: dict, today: date) -> Tuple[Optional[date], Optional[float], bool]:
         """
-        Get dividend data from yfinance.
+        Get dividend data from yfinance with proper handling of past vs future dates.
         Returns (ex_date, dividend_per_share, is_estimated)
         """
-        # Get EX Dividend Date from Info
+        
+        # Get dividend history first
+        dividends = ticker.dividends
+        if dividends.empty:
+            print(f"  No dividend history found")
+            return None, None, False
+        
+        # Convert dividend dates to simple dates for easier comparison
+        dividend_dates = [d.date() for d in dividends.index.to_pydatetime()]
+        dividend_amounts = dividends.values
+        
+        print(f"  Found {len(dividends)} historical dividends")
+        print(f"  Most recent dividend: {dividend_dates[-1]} = {dividend_amounts[-1]:.2f}")
+        
+        # Check if there's a future ex-dividend date announced
         ex_timestamp = info.get("exDividendDate")
+        print(f"  Raw ex-dividend timestamp: {ex_timestamp}")
         
         if ex_timestamp:
-            # There is a known ex-dividend date:
             ex_date = datetime.fromtimestamp(ex_timestamp).date()
-
-            # Get dividend history
-            dividends = ticker.dividends
-            if dividends.empty:
-                return None, None, False
-
-            # Convert ex_date to pandas timestamp
-            ex_date_ts = pd.Timestamp(ex_date).tz_localize("UTC")
-
-            # Check if we have actual dividend amount
-            if ex_date_ts in dividends.index:
-                div_amount = float(dividends.loc[ex_date_ts])
-                return ex_date, div_amount, False
+            print(f"  Ex-dividend date from info: {ex_date} (vs today: {today})")
+            
+            if ex_date > today:
+                # This is a future dividend
+                print(f"  ✓ Future dividend detected for {ex_date}")
+                
+                # Check if we already have the amount in dividend history
+                # Look for exact date match or very close dates (within 7 days)
+                amount_found = None
+                for hist_date, amount in zip(dividend_dates, dividend_amounts):
+                    if abs((hist_date - ex_date).days) <= 7:
+                        amount_found = amount
+                        print(f"  ✓ Found matching dividend amount: {amount_found:.2f}") 
+                        break
+                
+                if amount_found is not None:
+                    # We have the actual announced amount
+                    print(f"  → Using ANNOUNCED dividend: {ex_date} = {amount_found:.2f}")
+                    return ex_date, float(amount_found), False
+                else:
+                    # Ex-date announced but amount not yet available
+                    # Use most recent dividend as estimate
+                    last_amount = float(dividend_amounts[-1])
+                    print(f"  → Using ESTIMATED dividend: {ex_date} = {last_amount:.2f} (estimated)")
+                    return ex_date, last_amount, True
+            
+            elif ex_date <= today:
+                # This ex-date is in the past, ignore it for future calculations
+                print(f"  ⚠ Ex-date {ex_date} is in the past, will estimate next one")
             else:
-                # Ex-date is known but amount not yet announced (Use the most recent dividend as estimate)
-                last_div = float(dividends.iloc[-1])
-                return ex_date, last_div, True
+                print(f"  ⚠ Ex-date {ex_date} equals today, treating as past")
         else:
-            # No ex-dividend date in info - estimate based on pattern
-            dividends = ticker.dividends
-            if dividends.empty:
-                return None, None, False
-
-            # Get the last dividend 
-            last_div_date = dividends.index[-1].date()
-            last_div_amount = float(dividends.iloc[-1])
-
-            # Estimate next ex_date based on dividend frequency
-            estimated_ex_date = self._estimate_next_ex_date(dividends, today)
-
-            if estimated_ex_date and estimated_ex_date > today:
-                # Future estimated dividend
-                return estimated_ex_date, last_div_amount, True
-            else:
-                # No future dividend to calculate
-                return None, None, False
+            print(f"  ⚠ No ex-dividend date found in info")
+        
+        # No future ex-date found, estimate based on dividend pattern
+        print(f"  → Estimating next dividend based on historical pattern")
+        
+        # Estimate next ex-date based on dividend frequency
+        estimated_ex_date = self._estimate_next_ex_date(dividends, today)
+        
+        if estimated_ex_date and estimated_ex_date > today:
+            # Use the most recent dividend amount as estimate
+            last_amount = float(dividend_amounts[-1])
+            print(f"  → ESTIMATED next dividend: {estimated_ex_date} = {last_amount:.2f} (estimated)")
+            return estimated_ex_date, last_amount, True
+        else:
+            print(f"  ✗ Could not estimate future dividend")
+            return None, None, False
 
     def _estimate_next_ex_date(self, dividends: pd.Series, today: date) -> Optional[date]:
         """Estimate next ex dividend date based on historical pattern"""
@@ -163,14 +196,26 @@ class DividendCalculator:
 
     def _calculate_payout(self, shares: float, div_per_share:float, stock_curr: str) -> float: 
         """Calculate payout in base currency (GBP)"""
-        payout_local = shares * div_per_share
+        print(f"\nCalculating payout:")
+        print(f"  Shares: {shares}")
+        print(f"  Dividend per share: {div_per_share} {stock_curr}")
+        
+        # Calculate local payout
+        payout_local = round((shares * div_per_share), 2)
+        print(f"  Local payout: {payout_local} {stock_curr}")
 
         if stock_curr == settings.fx_base_curr:
+            print(f"  No FX conversion needed (already in {settings.fx_base_curr})")
             return payout_local
 
         # Get FX Rate
         fx_rate = self._get_fx_rate(stock_curr, settings.fx_base_curr)
-        return payout_local * fx_rate
+        print(f"  FX Rate {stock_curr}->{settings.fx_base_curr}: {fx_rate}")
+        
+        final_payout = round((payout_local * fx_rate), 2)
+        print(f"  Final payout: {final_payout} {settings.fx_base_curr}")
+        
+        return final_payout
 
     def _get_fx_rate(self, from_curr:str, to_curr: str) -> float:
         """Get FX rate with caching""" 
@@ -183,20 +228,34 @@ class DividendCalculator:
 
         try:
             resp = requests.get(settings.fx_url, params={"base": from_curr, "symbols": to_curr})
+            resp.raise_for_status()
             data = resp.json()
-            rate = data["rates"].get(to_curr, 1.0)
+            
+            if "rates" not in data:
+                raise ValueError("No rates found in response")
+                
+            rate = data["rates"].get(to_curr)
+            if not rate:
+                raise ValueError(f"No rate found for {to_curr}")
+                
             self.fx_cache[cache_key] = rate
-
             return rate
+        
         except (requests.RequestException, KeyError, ValueError) as e:
-            print(f"Error fetching FX rate: {str(e)}")
-            # Fallback rates
+            print(f"Error fetching FX rate for {from_curr}->{to_curr}: {str(e)}")
             fallbacks = {
                 ("USD", "GBP"): 0.79,
                 ("EUR", "GBP"): 0.86,
+                ("GBX", "GBP"): 0.01
             }
-
-            return fallbacks.get((from_curr, to_curr), 1.0)
+            
+            fallback_rate = fallbacks.get((from_curr, to_curr))
+            if fallback_rate:
+                print(f"Using fallback rate: {fallback_rate}")
+                return fallback_rate
+                
+            print(f"No fallback rate available for {from_curr}->{to_curr}, using 1.0")
+            return 1.0
         
 # Create summary report
 def create_dividend_summary(dividends: List[DividendInfo]) -> Dict:
