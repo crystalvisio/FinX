@@ -1,6 +1,6 @@
 # FinX - Trading 212 Dividend Tracker
 
-Hey there! 👋 This is my personal project to track and forecast dividends from my Trading 212 portfolio. I built this because I wanted a better way to keep track of my dividend income and upcoming payouts.
+Hey there! 👋 This is my personal project to track and forecast dividends from my Trading 212 portfolio. I built this cos I didn't wanna pay Snowball Analytics 😁 😁 and also looked like a good project... Enjoy!!!
 
 ## Features
 
